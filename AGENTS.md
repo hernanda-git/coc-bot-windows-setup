@@ -11,7 +11,10 @@ You are an AI agent with shell access to a **Windows 11 laptop** (target: IT26).
 powershell -ExecutionPolicy Bypass -File scripts\preflight.ps1
 
 # 2. Install (clone + venv + deps + configs.py) — non-interactive, ~15-25 min
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -RepoDir C:\CoC_Bot
+#    Flags: -RepoDir <path>       where to clone (default C:\CoC_Bot)
+#           -PythonVersion <ver>  default 3.11; upstream CI only tests 3.11
+#           -WithWebApp           also install app\requirements.txt (flask)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -RepoDir C:\CoC_Bot -WithWebApp
 
 # 3. Human must now: configure the emulator (README section 4) and edit src\configs.py (section 6)
 
@@ -21,6 +24,8 @@ powershell -ExecutionPolicy Bypass -File scripts\verify.ps1 -RepoDir C:\CoC_Bot
 # 5. Run
 C:\CoC_Bot\.venv\Scripts\python.exe C:\CoC_Bot\src\main.py
 ```
+
+**Web app only:** do not run `app\app.py` as shipped. It hardcodes `host="0.0.0.0"` with `debug=True` (README section 8.1) — an interactive Python debugger on an unauthenticated port. Change that line first, or skip the web app entirely and leave `WEB_APP_URL = ""`.
 
 ## Rules
 

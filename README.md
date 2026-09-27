@@ -60,7 +60,7 @@ An agent reading this file must, in order:
 | Item | Requirement | Notes |
 |---|---|---|
 | OS | Windows 11 x64 | Windows 10 works; Windows 8 and below do not |
-| Python | **3.11 exactly** | `setup.py` asserts `sys.version_info >= (3, 11)`. 3.11 or 3.12 both work; 3.13 untested |
+| Python | **3.11** (upstream's only CI-tested version) | `setup.py:7` asserts `sys.version_info >= (3, 11)`, so newer interpreters are not *blocked* — but upstream's release workflow (`.github/workflows/build_release.yml`) builds on 3.11 and nothing else. Use 3.11. |
 | Emulator | BlueStacks 5 **or** MuMu Player (MuMu = Windows only) | BlueStacks is the better-tested path |
 | Emulator resolution | **1920 × 1080** | Hard requirement. See §4.2 |
 | Emulator FPS | **60** | Hard requirement — "Inconsistent touch events at lower fps" (upstream README) |
@@ -71,7 +71,7 @@ An agent reading this file must, in order:
 | Instance name | `main` | Must match `INSTANCE_IDS` in configs |
 | Clash of Clans | Installed from Google Play inside the emulator | Default troop deployment size, Standard or XL scenery |
 
-**Disk:** ~10 GB. Emulator ~3 GB, Clones + `.venv` (torch/easyocr) ~4 GB, prebuilt release ~300 MB.
+**Disk:** ~10 GB is an estimate, not a measured figure — emulator ~3 GB, clone + `.venv` ~4 GB, prebuilt release ~300 MB. `src/requirements.txt` pins no torch version, so the exact footprint depends on which build your resolver picks. Free more than 10 GB if unsure.
 
 ---
 
@@ -110,7 +110,7 @@ winget install --id Google.PlatformTools -e
 adb --version
 ```
 
-Expected: `Android Debug Bridge version 1.0.41`.
+Expected: a line starting `Android Debug Bridge version 1.0.x`. Exact build number varies by platform-tools release; the guide does not pin one.
 
 If `winget` is unavailable, download from <https://developer.android.com/tools/releases/platform-tools>, unzip to `C:\platform-tools`, and add `C:\platform-tools` to PATH.
 
@@ -124,7 +124,7 @@ winget install --id BlueStacks.BlueStacks5 -e
 
 Then, **in the BlueStacks UI**:
 
-1. **Settings → Advanced → ADB** → enable ("Advanced settings" per upstream README). BlueStacks 5 exposes this as *Settings → Advanced → Android Debug Bridge*.
+1. **Enable Android Debug Bridge.** Upstream says only "Enable Android Debug Bridge in 'Advanced' settings" and does not name the exact menu path; BlueStacks 5 has moved this toggle between releases. Look under *Settings → Advanced* (or *Settings → Debug bridge*, depending on your BlueStacks build). If you cannot find it, update BlueStacks to the current release and check again.
 2. **Settings → Display**:
    - Resolution → **1920 x 1080** (Custom if not listed)
    - DPI → 240
@@ -146,6 +146,8 @@ Expected: one line with state `device` — typically `127.0.0.1:5555` (not `emul
 
 If the emulator is not running, the bot starts it itself (`AUTO_START_EMULATOR = True`) — so `adb devices` can legitimately be empty before the first bot run. In that case start BlueStacks manually once, confirm the device line appears, then stop it and let the bot take over.
 
+**Which adb binary the bot uses:** on Windows it prefers the bundled `C:\Program Files\BlueStacks_nxt\HD-Adb.exe` — but **only when `EMULATOR_TYPE = "bluestacks"`** (`src/utils.py:1380-1382`). With `EMULATOR_TYPE = "mumu"` it falls back to whatever `adb` is on PATH. If neither is found it raises `FileNotFoundError("ADB executable not found. Set ADB_ABS_DIR to its directory.")`.
+
 ### 4.3 MuMu Player (alternative, Windows only)
 
 ```powershell
@@ -156,7 +158,7 @@ If the emulator is not running, the bot starts it itself (`AUTO_START_EMULATOR =
 - MuMu is driven through `MuMuManager.exe`. Auto-detected at
   `C:\Program Files\Netease\MuMuPlayer\nx_main\MuMuManager.exe`; if it lives elsewhere set `MUMU_BIN_PATH` in `src/configs.py`.
 - Set `EMULATOR_TYPE = "mumu"`.
-- The bot resolves each instance's identity from MuMuManager's own `name` field per `vmindex`.
+- The bot runs `MuMuManager.exe info --vmindex all`, walks the returned JSON, and finds the entry whose `name` field equals your bot instance ID — that entry's `index` is the vmindex it drives. So the MuMu instance **name** must match `INSTANCE_IDS`; the vmindex is derived from the name, not the other way round.
 
 ### 4.4 Emulator settings — non-negotiable
 
@@ -308,8 +310,10 @@ adb devices
 # PASS: a line reading "<serial>  device" (usually 127.0.0.1:5555)
 
 # V2 — adbutils can reach it
-.\.venv\Scripts\python.exe -c "import adbutils; print([d.serial for d in adbutils.adb.device_iter()])"
+.\.venv\Scripts\python.exe -c "import adbutils; print([d.serial for d in adbutils.adb.device_list()])"
 # PASS: a list containing 127.0.0.1:5555 or emulator-5554
+# NOTE: the method is device_list(), NOT device_iter() — that name does not exist
+# in adbutils and raises AttributeError. Verified against adbutils 2.12.0.
 
 # V3 — Clash of Clans is installed in the emulator
 adb shell pm list packages | Select-String clashofclans
@@ -348,7 +352,9 @@ adb shell wm size
 ```
 
 > [!IMPORTANT]
-> **There is no `--no-gui` flag.** The only CLI flags are `--debug`, `--id`, `--gui`, `--gui-port` (`src/utils.py:32-36`), and `--gui` is a `store_true` whose *default* comes from `LOCAL_GUI`. To run headless, set `LOCAL_GUI = False` in `src/configs.py` — the desktop window will not appear and the bot runs in the console.
+> **There is no `--no-gui` flag.** The accepted flags are `--debug`, `--id`, `--gui`, `--gui-port` (`src/utils.py:33-36`), and `--gui` is a `store_true` whose *default* comes from `LOCAL_GUI` — so it can only turn the GUI **on**, never off. To run headless, set `LOCAL_GUI = False` in `src/configs.py`; the desktop window will not appear and the bot runs in the console.
+>
+> `--gui-port` is accepted but is a **no-op**: `src/launch.py:33` overwrites it with the port the GUI actually bound (`args.gui_port = get_gui().server_port`). The GUI picks a free port itself. Don't pass it.
 
 **Logs:** the log path is derived from the module's own location, not your shell's working directory — `src/utils.py:19-24` sets `DEBUG_DIR = Path(__file__).parent.parent / "debug"`, i.e. `C:\CoC_Bot\debug\` when you cloned to `C:\CoC_Bot`. One log per instance, `main.log` by default. 10 MB rotation, 5 files kept, zipped. `DEBUG = True` in configs is the equivalent of `--debug`.
 
@@ -379,16 +385,23 @@ start_coc (auto-updates CoC from the Play Store first)
 .\.venv\Scripts\python.exe app\app.py    # serves on 0.0.0.0:1234
 ```
 
+> [!CAUTION]
+> `app/app.py:209` hardcodes `app.run(host="0.0.0.0", port=1234, debug=True)`. **`debug=True` is not overridable from configs** — the Flask/Werkzeug interactive debugger is on, which accepts arbitrary Python on an unauthenticated port. That is a remote-code-execution surface, not just a status page.
+>
+> To use the web app safely, edit `app/app.py:209` to `app.run(host="127.0.0.1", port=1234, debug=False)` before running it, and reach it only from the LAN via an SSH/port-forward, or put it behind a reverse proxy with authentication. If you cannot do that, leave `WEB_APP_URL = ""` and use the desktop GUI or Telegram instead.
+
 Set `WEB_APP_URL = "http://<host>:1234"` in configs so instances register. Then set `PA_USERNAME`/`PA_PASSWORD` and the bot auto-extends PythonAnywhere hosting daily if you host it there.
 
 For LAN-only access, add a Windows Firewall rule:
 
 ```powershell
-New-NetFirewallRule -DisplayName "CoC Bot Web" -Direction Inbound -LocalPort 1234 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "CoC Bot Web" -Direction Inbound -LocalPort 1234 -Protocol TCP -Action Allow -Profile Private
 ```
 
+Note the `-Profile Private` — the web app has no authentication of its own.
+
 > [!CAUTION]
-> The web app has **no authentication**. `CORS(app)` is wide open. Never expose port 1234 to the internet — anyone who reaches it can pause and control your bot. Keep it on the LAN or behind a VPN.
+> The web app has **no authentication**. `CORS(app)` is wide open. Anyone who reaches it can pause and control your bot. Never expose port 1234 to the internet.
 
 ### 8.2 Telegram notifications
 
@@ -439,6 +452,8 @@ Only relevant with the web app. Download Scriptable (<https://apps.apple.com/us/
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `AttributeError: 'AdbClient' object has no attribute 'device_iter'` | Using a StackOverflow snippet instead of the real adbutils API | Use `adbutils.adb.device_list()` — `device_iter` does not exist in adbutils (verified on 2.12.0) |
+| `FileNotFoundError: ADB executable not found` | adb not on PATH and the bundled BlueStacks adb not found — note the bundled one is only used when `EMULATOR_TYPE = "bluestacks"` | `winget install Google.PlatformTools`, reopen the shell, or set `ADB_ABS_DIR` to the adb folder |
 | `Python 3.11 or higher is required!` | Too old an interpreter | `py -3.11 -m venv .venv` and recreate the venv |
 | `BlueStacks instance 'main' was not found` | Instance display name ≠ `INSTANCE_IDS` | Rename in Multi-Instance Manager to exactly `main`, restart BlueStacks |
 | `ADB port for BlueStacks instance ... not found` | BlueStacks config not written yet | Launch the instance once in the GUI, then retry |

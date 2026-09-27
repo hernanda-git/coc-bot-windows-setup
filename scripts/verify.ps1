@@ -85,10 +85,14 @@ $sh = "adb"
 if ($script:serial) { $sh = "adb -s $script:serial" }
 
 # --- V2: adbutils can enumerate and reach a device ----------------------------
-# Accepts either 127.0.0.1:PORT (the bot's own connection) or emulator-NNNN.
+# NOTE: the correct API is adbutils.adb.device_list(). There is no device_iter()
+# in adbutils -- that name appears in StackOverflow answers for other libraries
+# and raises AttributeError: 'AdbClient' object has no attribute 'device_iter'.
 Say "`n--- V2: adbutils enumerates devices ---"
-$v2 = & $py -c "import adbutils; print([d.serial for d in adbutils.adb.device_iter()])" 2>&1
+$v2 = & $py -c "import adbutils; print([d.serial for d in adbutils.adb.device_list()])" 2>&1
 $v2 | Out-String | Write-Host
+# Accept either form: 127.0.0.1:<port> (the bot's own connection, what
+# BlueStacks/MuMu give you) or emulator-NNNN (a plain AVD).
 if ("$v2" -match 'emulator-\d+|127\.0\.0\.1:\d+') { Pass "V2 adbutils sees a device" }
 else { FailCheck "V2" }
 
